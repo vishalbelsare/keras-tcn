@@ -1,5 +1,5 @@
 import inspect
-from typing import List # noqa
+from typing import List  # noqa
 
 import tensorflow as tf
 # pylint: disable=E0611,E0401
@@ -69,6 +69,8 @@ class ResidualBlock(Layer):
         self.shape_match_conv = None
         self.res_output_shape = None
         self.final_activation = None
+        self.batch_norm_layers = []
+        self.layer_norm_layers = []
 
         super(ResidualBlock, self).__init__(**kwargs)
 
@@ -108,9 +110,13 @@ class ResidualBlock(Layer):
 
                 with K.name_scope('norm_{}'.format(k)):
                     if self.use_batch_norm:
-                        self._build_layer(BatchNormalization())
+                        bn_layer = BatchNormalization()
+                        self.batch_norm_layers.append(bn_layer)
+                        self._build_layer(bn_layer)
                     elif self.use_layer_norm:
-                        self._build_layer(LayerNormalization())
+                        ln_layer = LayerNormalization()
+                        self.layer_norm_layers.append(ln_layer)
+                        self._build_layer(ln_layer)
                     elif self.use_weight_norm:
                         pass  # done above.
 
@@ -227,7 +233,7 @@ class TCN(Layer):
                  go_backwards=False,
                  return_state=False,
                  **kwargs):
-
+        self.stateful = False  # TCN are not stateful. Keras requires this parameter.
         self.return_sequences = return_sequences
         self.dropout_rate = dropout_rate
         self.use_skip_connections = use_skip_connections
@@ -270,6 +276,12 @@ class TCN(Layer):
     def receptive_field(self):
         return 1 + 2 * (self.kernel_size - 1) * self.nb_stacks * sum(self.dilations)
 
+    def tolist(self, shape):
+        try:
+            return shape.as_list()
+        except AttributeError:
+            return shape
+
     def build(self, input_shape):
 
         # member to hold current output shape of the layer for building purposes
@@ -305,9 +317,9 @@ class TCN(Layer):
 
         self.output_slice_index = None
         if self.padding == 'same':
-            time = self.build_output_shape.as_list()[1]
+            time = self.tolist(self.build_output_shape)[1]
             if time is not None:  # if time dimension is defined. e.g. shape = (bs, 500, input_dim).
-                self.output_slice_index = int(self.build_output_shape.as_list()[1] / 2)
+                self.output_slice_index = int(self.tolist(self.build_output_shape)[1] / 2)
             else:
                 # It will known at call time. c.f. self.call.
                 self.padding_same_and_time_dim_unknown = True
@@ -315,7 +327,7 @@ class TCN(Layer):
         else:
             self.output_slice_index = -1  # causal case.
         self.slicer_layer = Lambda(lambda tt: tt[:, self.output_slice_index, :], name='Slice_Output')
-        self.slicer_layer.build(self.build_output_shape.as_list())
+        self.slicer_layer.build(self.tolist(self.build_output_shape))
 
     def compute_output_shape(self, input_shape):
         """
